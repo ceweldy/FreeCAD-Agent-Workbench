@@ -96,6 +96,7 @@ def get_application() -> AgentCADApplication:
     if _application is None:
         import FreeCADGui as Gui  # type: ignore[import-not-found]
 
+        # isort: split
         import FreeCAD as App  # type: ignore[import-not-found]
 
         _application = AgentCADApplication(App, Gui)

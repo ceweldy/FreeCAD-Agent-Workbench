@@ -38,6 +38,7 @@ def initialize_gui() -> None:
 
     import FreeCADGui as Gui  # type: ignore[import-not-found]
 
+    # isort: split
     import FreeCAD as App  # type: ignore[import-not-found]
 
     _require_supported_freecad(App)
