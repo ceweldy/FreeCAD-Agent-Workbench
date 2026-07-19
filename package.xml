@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<package format="1" xmlns="https://wiki.freecad.org/Package_Metadata">
+    <name>AgentCAD</name>
+    <description>Agent-native CAD assistance with bounded tools and durable project memory.</description>
+    <version>0.1.0</version>
+    <date>2026-07-19</date>
+    <freecadmin>1.1.0</freecadmin>
+    <pythonmin>3.11</pythonmin>
+    <tag>AI</tag>
+    <tag>Agent</tag>
+    <tag>Part</tag>
+    <tag>Productivity</tag>
+    <maintainer>Connor Weldy</maintainer>
+    <license file="LICENSE">MIT</license>
+    <icon>freecad/AgentCAD/Resources/Icons/AgentCAD.svg</icon>
+    <url type="documentation">https://github.com/ceweldy/AgentCAD/tree/main/docs</url>
+    <url branch="main" type="repository">https://github.com/ceweldy/AgentCAD</url>
+    <url type="bugtracker">https://github.com/ceweldy/AgentCAD/issues</url>
+    <url type="readme">https://raw.githubusercontent.com/ceweldy/AgentCAD/main/README.md</url>
+    <content>
+        <workbench/>
+    </content>
+</package>

@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "freecad-agentcad"
+version = "0.1.0"
+description = "Agent-native CAD assistance for FreeCAD"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "AgentCAD contributors"}]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2,<9",
+    "pytest-cov>=5,<7",
+    "ruff>=0.12,<1",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["freecad.AgentCAD*"]
+namespaces = true
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 96
+extend-exclude = ["build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Run an explicit, harmless live smoke test against Codex app-server."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import tempfile
+import threading
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from freecad.AgentCAD.core.tools import SafetyLevel, ToolSpec  # noqa: E402
+from freecad.AgentCAD.providers.codex import CodexProvider  # noqa: E402
+
+MARKER = "AGENTCAD_CODEX_SMOKE_OK"
+
+
+def _health_spec() -> ToolSpec:
+    return ToolSpec(
+        name="agentcad.health",
+        description="Return a harmless health receipt for AgentCAD protocol validation.",
+        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        safety=SafetyLevel.READ,
+        handler=lambda _context, _arguments: {"ok": True, "status": "healthy"},
+        requires_document=False,
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="agentcad-codex-smoke",
+        description="Exercise the live Codex connection and one harmless dynamic tool call.",
+    )
+    parser.add_argument("--json", action="store_true", help="Print a JSON result.")
+    parser.add_argument("--model", help="Optional Codex model override.")
+    parser.add_argument(
+        "--reasoning-effort",
+        default="medium",
+        choices=("low", "medium", "high", "xhigh"),
+        help="Codex reasoning effort for the smoke test.",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=180.0,
+        help="Maximum turn duration in seconds.",
+    )
+    return parser
+
+
+def run_smoke(*, model: str | None, reasoning_effort: str, timeout: float) -> dict[str, Any]:
+    if timeout <= 0:
+        raise ValueError("timeout must be greater than zero")
+    provider = CodexProvider(
+        model=model,
+        reasoning_effort=reasoning_effort,
+        request_timeout=min(30.0, timeout),
+        turn_timeout=timeout,
+    )
+    called: list[str] = []
+
+    def tool_handler(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name != "agentcad.health" or arguments:
+            return {"ok": False, "error": "Smoke test received an unexpected tool request."}
+        called.append(name)
+        return {"ok": True, "status": "healthy", "protocol": "agentcad-smoke-v1"}
+
+    try:
+        status = provider.status()
+        if not status.ready:
+            return {
+                "ok": False,
+                "provider": "codex",
+                "message": status.message,
+                "tool_calls": 0,
+            }
+        with tempfile.TemporaryDirectory(prefix="agentcad-codex-smoke-") as runtime_dir:
+            result = provider.run_turn(
+                prompt=(
+                    "Call agentcad.health exactly once with an empty object. After the tool "
+                    "returns, "
+                    f"reply with exactly {MARKER}. Do not use any other tool."
+                ),
+                context={"smoke_test": True, "freecad_required": False},
+                memory={"entries": []},
+                recent_turns=[],
+                tools=[_health_spec()],
+                schema_revision="agentcad-smoke-v1",
+                runtime_dir=runtime_dir,
+                existing_thread_id=None,
+                tool_handler=tool_handler,
+                on_event=lambda _event: None,
+                cancel_event=threading.Event(),
+            )
+        marker_present = result.text.strip() == MARKER
+        ok = called == ["agentcad.health"] and result.tool_calls == 1 and marker_present
+        return {
+            "ok": ok,
+            "provider": "codex",
+            "provider_version": status.version,
+            "status": result.status,
+            "tool_calls": result.tool_calls,
+            "health_tool_called_once": called == ["agentcad.health"],
+            "marker_received": marker_present,
+            "message": "Codex app-server smoke test passed."
+            if ok
+            else ("Codex app-server completed, but the smoke contract was not satisfied."),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "provider": "codex",
+            "message": (
+                "Codex app-server smoke test failed "
+                f"({exc.__class__.__name__}). No credential details were logged."
+            ),
+            "tool_calls": len(called),
+        }
+    finally:
+        provider.close()
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    report = run_smoke(
+        model=args.model,
+        reasoning_effort=args.reasoning_effort,
+        timeout=args.timeout,
+    )
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        outcome = "PASS" if report["ok"] else "FAIL"
+        print(f"[{outcome}] {report['message']}")
+        print(f"Tool calls: {report.get('tool_calls', 0)}")
+    return 0 if report["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
