@@ -22,4 +22,4 @@ jobs:
       - run: python -m pip install -e '.[dev]'
       - run: python -m ruff check .
       - run: python -m pytest
-      - run: python scripts/agentcad-doctor --json --skip-codex
+      - run: python scripts/agent-workbench-doctor --json --skip-codex

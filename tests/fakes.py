@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -100,6 +101,10 @@ class FakeDocument:
         self.recomputes = 0
         self.recompute_result = True
         self.recompute_hook: Callable[[], None] | None = None
+        self.saves = 0
+        self.save_result: bool | None = None
+        self.save_copies: list[str] = []
+        self.save_copy_result: bool | None = None
         self.UndoMode = 1
         self.pending_transaction = False
         self.active_transaction_id = 0
@@ -149,6 +154,21 @@ class FakeDocument:
         if self.recompute_hook is not None:
             self.recompute_hook()
         return self.recompute_result
+
+    def save(self) -> bool | None:
+        self.saves += 1
+        if self.save_result is False:
+            return False
+        if self.FileName:
+            Path(self.FileName).write_bytes(b"fake-freecad-document")
+        return self.save_result
+
+    def saveCopy(self, path: str) -> bool | None:
+        self.save_copies.append(path)
+        if self.save_copy_result is False:
+            return False
+        Path(path).write_bytes(b"fake-freecad-checkpoint")
+        return self.save_copy_result
 
     def addObject(self, type_id: str, name: str) -> FakeObject:
         obj = FakeObject(name, type_id=type_id, shape=None)

@@ -27,7 +27,7 @@ def register(registry: ToolRegistry) -> None:
             name="memory.remember",
             description=(
                 "Store one durable design fact with conversation provenance for "
-                "future AgentCAD turns."
+                "future Agent Workbench turns."
             ),
             input_schema={
                 "type": "object",

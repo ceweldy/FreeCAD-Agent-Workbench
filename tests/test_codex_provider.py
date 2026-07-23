@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from freecad.AgentCAD.providers.codex import (
     CODEX_PERMISSION_PROFILE,
     CodexProtocolError,
     CodexProvider,
+    _discover_codex_executable,
     _final_text,
     _item_label,
     _parse_codex_version,
@@ -96,6 +98,88 @@ def test_executable_precedence_and_missing_override(tmp_path: Path, monkeypatch)
     assert CodexProvider(str(tmp_path / "missing")).executable() is None
 
 
+def test_desktop_discovery_finds_codex_outside_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    executable = home / ".codex" / "bin" / "codex"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o700)
+    monkeypatch.setattr(codex_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(codex_module.Path, "home", lambda: home)
+    assert _discover_codex_executable() == str(executable)
+
+
+def test_desktop_discovery_honors_codex_cli_path(tmp_path: Path, monkeypatch) -> None:
+    executable = tmp_path / "desktop" / "codex"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o700)
+    monkeypatch.setenv("CODEX_CLI_PATH", str(executable))
+    monkeypatch.setattr(codex_module.shutil, "which", lambda _name: None)
+
+    assert _discover_codex_executable() == str(executable)
+
+
+def test_desktop_discovery_checks_openai_windows_location(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    local_app_data = tmp_path / "LocalAppData"
+    executable_name = "codex.exe" if os.name == "nt" else "codex"
+    expected = (
+        local_app_data
+        / "Programs"
+        / "OpenAI"
+        / "Codex"
+        / "bin"
+        / executable_name
+    )
+    monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    monkeypatch.setattr(codex_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(codex_module.Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setattr(codex_module, "_is_executable", lambda path: path == expected)
+
+    assert _discover_codex_executable() == str(expected)
+
+
+def test_desktop_discovery_checks_windows_npm_wrapper(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app_data = tmp_path / "AppData" / "Roaming"
+    expected = app_data / "npm" / "codex.cmd"
+    monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setenv("APPDATA", str(app_data))
+    monkeypatch.setattr(codex_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(codex_module.Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setattr(codex_module, "_is_executable", lambda path: path == expected)
+
+    assert _discover_codex_executable() == str(expected)
+
+
+def test_desktop_discovery_ignores_non_executable_candidate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    candidate = home / ".codex" / "bin" / "codex"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text("not executable", encoding="utf-8")
+    candidate.chmod(0o600)
+    monkeypatch.setattr(codex_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(codex_module.Path, "home", lambda: home)
+    real_is_executable = codex_module._is_executable
+    monkeypatch.setattr(
+        codex_module,
+        "_is_executable",
+        lambda path: real_is_executable(path) if path == candidate else False,
+    )
+    assert _discover_codex_executable() is None
+
+
 @pytest.mark.parametrize(
     ("login_output", "authenticated"),
     [
@@ -126,8 +210,8 @@ def test_status_parses_cli_without_credentials(
         "Codex is connected."
         if authenticated
         else (
-            "Codex is installed but AgentCAD's isolated Codex home is not "
-            "connected. Choose Connect in the AgentCAD panel."
+            "Codex is installed but Agent Workbench's isolated Codex home is not "
+            "connected. Choose Connect in the Agent Workbench panel."
         )
     )
     assert status == ProviderStatus(
@@ -282,7 +366,7 @@ def test_app_server_command_defines_isolated_profile_and_sanitizes_environment(
         '{"dedicated": true}'
     )
     assert (isolated_home / "config.toml").read_text(encoding="utf-8").startswith(
-        "# Managed by AgentCAD."
+        "# Managed by Agent Workbench."
     )
     session_marker = isolated_home / "sessions" / "thread-1"
     session_marker.parent.mkdir()
@@ -905,7 +989,14 @@ def test_started_builtin_capability_interrupts_turn(monkeypatch, item_type: str)
 
 
 def test_turn_prompt_and_display_helpers_are_bounded_and_stable() -> None:
-    recent = [{"role": "user", "content": f"request-{index}"} for index in range(8)] + [
+    recent = [
+        {
+            "role": "user",
+            "content": f"request-{index}",
+            "metadata": {"turn_owner": {"host": "private-workstation"}},
+        }
+        for index in range(8)
+    ] + [
         {"role": "system", "content": "excluded"}
     ]
     prompt = _turn_prompt(
@@ -918,13 +1009,14 @@ def test_turn_prompt_and_display_helpers_are_bounded_and_stable() -> None:
     assert "LIVE FREECAD STATE" in prompt
     assert "DURABLE PROJECT MEMORY" in prompt
     assert "excluded" not in prompt
+    assert "private-workstation" not in prompt
     assert "request-0" not in prompt
     assert "request-7" in prompt
     assert (
         _final_text({"items": [{"type": "agentMessage", "text": "one"}, {"type": "reasoning"}]})
         == "one"
     )
-    assert _item_label({"type": "dynamicToolCall"}) == "Using an AgentCAD tool"
+    assert _item_label({"type": "dynamicToolCall"}) == "Using an Agent Workbench tool"
     assert _item_label({"type": "custom"}) == "custom"
 
 

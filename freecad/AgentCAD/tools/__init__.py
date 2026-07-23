@@ -1,4 +1,4 @@
-"""Built-in AgentCAD tool packs."""
+"""Built-in Agent Workbench tool packs."""
 
 from __future__ import annotations
 

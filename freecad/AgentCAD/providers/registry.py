@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .. import SHORT_NAME
 from .base import AgentProvider
 
 
@@ -18,7 +19,7 @@ class ProviderRegistry:
         try:
             return self._providers[provider_id]
         except KeyError as exc:
-            raise ValueError(f"Unknown AgentCAD provider: {provider_id}") from exc
+            raise ValueError(f"Unknown {SHORT_NAME} provider: {provider_id}") from exc
 
     def providers(self) -> list[AgentProvider]:
         return [self._providers[key] for key in sorted(self._providers)]

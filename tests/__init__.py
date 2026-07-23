@@ -1,1 +1,1 @@
-"""AgentCAD test package."""
+"""Agent Workbench test package."""

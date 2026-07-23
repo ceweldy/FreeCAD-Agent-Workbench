@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .. import SHORT_NAME
 from ..core.tools import SafetyLevel, ToolContext, ToolRegistry, ToolSpec, success
 from ..core.transactions import FreeCADTransaction, Verification
 
@@ -65,6 +66,7 @@ def register(registry: ToolRegistry) -> None:
             },
             safety=SafetyLevel.SAFE_WRITE,
             handler=_boolean,
+            mutates_document=True,
         )
     )
     registry.register(
@@ -162,6 +164,7 @@ def _primitive_spec(kind: str) -> ToolSpec:
         handler=lambda context, arguments, selected=kind: _create_primitive(
             context, selected, arguments
         ),
+        mutates_document=True,
     )
 
 
@@ -199,7 +202,7 @@ def _create_primitive(
 
     return FreeCADTransaction(
         doc,
-        f"AgentCAD: create {kind}",
+        f"{SHORT_NAME}: create {kind}",
         application=context.app,
     ).run(action, verify)
 
@@ -244,7 +247,7 @@ def _boolean(context: ToolContext, arguments: dict[str, Any]) -> dict[str, Any]:
 
     return FreeCADTransaction(
         doc,
-        f"AgentCAD: {arguments['operation']}",
+        f"{SHORT_NAME}: {arguments['operation']}",
         application=context.app,
     ).run(action, verify)
 
@@ -322,7 +325,10 @@ def _verify_shape(obj: Any, *, expected_solid: bool) -> Verification:
 
 
 def _unique_name(doc: Any, label: str) -> str:
-    base = re.sub(r"[^A-Za-z0-9_]", "_", label).strip("_") or "AgentCADObject"
+    base = (
+        re.sub(r"[^A-Za-z0-9_]", "_", label).strip("_")
+        or "AgentWorkbenchObject"
+    )
     if base[0].isdigit():
         base = "Object_" + base
     if hasattr(doc, "getUniqueObjectName"):

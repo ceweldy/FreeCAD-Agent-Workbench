@@ -1,4 +1,4 @@
-"""Operator-facing readiness checks for AgentCAD."""
+"""Operator-facing readiness checks for Agent Workbench for FreeCAD."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from . import __version__
+from . import LEGACY_ID, MANIFEST_NAME, PRODUCT_NAME, SHORT_NAME, __version__
 from .providers.codex import CodexProvider
 
 MINIMUM_PYTHON = (3, 11)
@@ -30,7 +30,7 @@ class CheckResult:
 
 
 def run_checks(*, skip_codex: bool = False) -> dict[str, object]:
-    """Run AgentCAD readiness checks without exposing credential material."""
+    """Run workbench readiness checks without exposing credential material."""
     checks = [
         _check_python(),
         _check_package(),
@@ -42,7 +42,7 @@ def run_checks(*, skip_codex: bool = False) -> dict[str, object]:
     warnings = sum(item.status == "warning" for item in checks)
     passed = sum(item.status == "pass" for item in checks)
     return {
-        "product": "AgentCAD",
+        "product": PRODUCT_NAME,
         "version": __version__,
         "ok": failed == 0,
         "checks": [asdict(item) for item in checks],
@@ -64,7 +64,7 @@ def _check_python() -> CheckResult:
             "python",
             "Python runtime",
             "fail",
-            f"Python {actual} is too old. AgentCAD requires Python {required} or newer.",
+            f"Python {actual} is too old. {SHORT_NAME} requires Python {required} or newer.",
         )
     return CheckResult(
         "python",
@@ -87,15 +87,15 @@ def _check_package() -> CheckResult:
     except Exception as exc:
         return CheckResult(
             "package",
-            "AgentCAD package",
+            f"{SHORT_NAME} package",
             "fail",
-            f"AgentCAD package import failed: {_safe_error(exc)}",
+            f"{SHORT_NAME} package import failed: {_safe_error(exc)}",
         )
     return CheckResult(
         "package",
-        "AgentCAD package",
+        f"{SHORT_NAME} package",
         "pass",
-        f"AgentCAD {version} imports successfully.",
+        f"{SHORT_NAME} {version} imports successfully.",
     )
 
 
@@ -106,7 +106,7 @@ def _check_manifest() -> CheckResult:
             "manifest",
             "FreeCAD manifest",
             "fail",
-            "package.xml was not found next to the AgentCAD source tree.",
+            "package.xml was not found next to the workbench source tree.",
         )
     try:
         root = ET.parse(path).getroot()
@@ -115,8 +115,8 @@ def _check_manifest() -> CheckResult:
         workbench = content is not None and any(
             _local_name(child.tag) == "workbench" for child in content
         )
-        if values.get("name") != "AgentCAD":
-            raise ValueError("manifest name must be AgentCAD")
+        if values.get("name") != MANIFEST_NAME:
+            raise ValueError(f"manifest name must be {MANIFEST_NAME}")
         if values.get("version") != __version__:
             raise ValueError("manifest version does not match the package version")
         if not values.get("freecadmin"):
@@ -134,7 +134,7 @@ def _check_manifest() -> CheckResult:
         "manifest",
         "FreeCAD manifest",
         "pass",
-        f"FreeCAD package metadata is valid for AgentCAD {__version__}.",
+        f"FreeCAD package metadata is valid for {SHORT_NAME} {__version__}.",
     )
 
 
@@ -149,7 +149,7 @@ def _check_data_directory() -> CheckResult:
             dir=directory,
             delete=True,
         ) as stream:
-            stream.write("AgentCAD write check\n")
+            stream.write(f"{SHORT_NAME} write check\n")
             stream.flush()
             os.fsync(stream.fileno())
     except OSError as exc:
@@ -157,13 +157,13 @@ def _check_data_directory() -> CheckResult:
             "data_directory",
             "Local data directory",
             "fail",
-            f"AgentCAD cannot write its local data directory: {_safe_error(exc)}",
+            f"{SHORT_NAME} cannot write its local data directory: {_safe_error(exc)}",
         )
     return CheckResult(
         "data_directory",
         "Local data directory",
         "pass",
-        "AgentCAD can write its project-scoped local data directory.",
+        f"{SHORT_NAME} can write its project-scoped local data directory.",
     )
 
 
@@ -204,7 +204,9 @@ def _repository_root() -> Path:
 
 
 def _data_directory() -> Path:
-    override = os.environ.get("AGENTCAD_DATA_DIR")
+    override = os.environ.get("AGENT_WORKBENCH_DATA_DIR") or os.environ.get(
+        "AGENTCAD_DATA_DIR"
+    )
     if override:
         return Path(override).expanduser()
     try:
@@ -212,15 +214,15 @@ def _data_directory() -> Path:
 
         root = str(App.getUserAppDataDir()).strip()
         if root:
-            return Path(root).expanduser() / "AgentCAD"
+            return Path(root).expanduser() / LEGACY_ID
     except (ImportError, AttributeError, RuntimeError):
         pass
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "AgentCAD"
+        return Path.home() / "Library" / "Application Support" / LEGACY_ID
     if os.name == "nt":
         local = os.environ.get("LOCALAPPDATA")
         if local:
-            return Path(local) / "AgentCAD"
+            return Path(local) / LEGACY_ID
     xdg = os.environ.get("XDG_DATA_HOME")
     if xdg:
         return Path(xdg).expanduser() / "agentcad"
@@ -237,7 +239,7 @@ def _safe_error(error: BaseException) -> str:
 
 
 def _render_human(report: dict[str, object]) -> str:
-    rows = [f"AgentCAD Doctor {report['version']}", ""]
+    rows = [f"{SHORT_NAME} Doctor {report['version']}", ""]
     labels = {"pass": "PASS", "fail": "FAIL", "warning": "WARN", "skipped": "SKIP"}
     for item in report["checks"]:
         if not isinstance(item, dict):
@@ -263,8 +265,8 @@ def _render_human(report: dict[str, object]) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="agentcad-doctor",
-        description="Check whether AgentCAD and its Codex connection are ready.",
+        prog="agent-workbench-doctor",
+        description=f"Check whether {SHORT_NAME} and its Codex connection are ready.",
     )
     parser.add_argument("--json", action="store_true", help="Print a JSON readiness report.")
     parser.add_argument(

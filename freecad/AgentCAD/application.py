@@ -1,4 +1,4 @@
-"""AgentCAD application composition for an active FreeCAD GUI process."""
+"""Agent Workbench application composition for an active FreeCAD GUI process."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from .providers.registry import ProviderRegistry
 from .tools import build_registry
 from .ui.qt import RIGHT_DOCK_AREA, QtCore
 from .ui.settings import AgentCADSettings
+from .ui.workspace import configure_workspace
 
 
 class AgentCADApplication:
@@ -22,6 +23,11 @@ class AgentCADApplication:
         self.app = app
         self.gui = gui
         self.settings = AgentCADSettings(app)
+        configure_workspace(
+            app,
+            gui,
+            enabled=self.settings.snapshot().fusion_workspace,
+        )
         self.store = ProjectStore(Path(app.getUserAppDataDir()) / "AgentCAD")
         self.registry = build_registry()
         self.provider_registry = ProviderRegistry()
@@ -52,6 +58,12 @@ class AgentCADApplication:
                 main_window.addDockWidget(RIGHT_DOCK_AREA, self.dock)
         self.dock.show()
         self.dock.raise_()
+        configure_workspace(
+            self.app,
+            self.gui,
+            enabled=self.settings.snapshot().fusion_workspace,
+            dock=self.dock,
+        )
         self.dock.panel.refresh_project(force=True)
         return self.dock
 
@@ -68,6 +80,12 @@ class AgentCADApplication:
         self.provider_registry.register(self.current_provider)
         self.session.provider = self.provider_registry.get(selected)
         self.session.policy = self._build_policy()
+        configure_workspace(
+            self.app,
+            self.gui,
+            enabled=self.settings.snapshot().fusion_workspace,
+            dock=self.dock,
+        )
         old_registry.close()
 
     def shutdown(self) -> None:

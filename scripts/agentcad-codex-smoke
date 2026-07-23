@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run an explicit, harmless live smoke test against Codex app-server."""
+"""Run the Agent Workbench live smoke test against Codex app-server."""
 
 from __future__ import annotations
 
@@ -25,7 +25,9 @@ MARKER = "AGENTCAD_CODEX_SMOKE_OK"
 def _health_spec() -> ToolSpec:
     return ToolSpec(
         name="agentcad.health",
-        description="Return a harmless health receipt for AgentCAD protocol validation.",
+        description=(
+            "Return a harmless health receipt for Agent Workbench protocol validation."
+        ),
         input_schema={"type": "object", "properties": {}, "additionalProperties": False},
         safety=SafetyLevel.READ,
         handler=lambda _context, _arguments: {"ok": True, "status": "healthy"},
@@ -35,7 +37,7 @@ def _health_spec() -> ToolSpec:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="agentcad-codex-smoke",
+        prog="agent-workbench-codex-smoke",
         description="Exercise the live Codex connection and one harmless dynamic tool call.",
     )
     parser.add_argument("--json", action="store_true", help="Print a JSON result.")

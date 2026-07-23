@@ -1,4 +1,4 @@
-"""AgentCAD provider adapters."""
+"""Agent Workbench provider adapters."""
 
 from .codex import CodexProvider
 from .registry import ProviderRegistry

@@ -1,1 +1,1 @@
-"""Provider-neutral AgentCAD core."""
+"""Provider-neutral Agent Workbench core."""

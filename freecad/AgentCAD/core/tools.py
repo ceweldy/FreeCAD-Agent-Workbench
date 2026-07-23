@@ -1,4 +1,4 @@
-"""Versioned AgentCAD tool contracts, validation, and registry."""
+"""Versioned Agent Workbench tool contracts, validation, and registry."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
+
+from .. import SHORT_NAME
 
 
 class SafetyLevel(StrEnum):
@@ -51,6 +53,7 @@ class ToolSpec:
     handler: ToolHandler
     version: int = 1
     requires_document: bool = True
+    mutates_document: bool = False
 
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+", self.name):
@@ -65,6 +68,13 @@ class ToolSpec:
             raise ToolContractError(f"Tool {self.name} must accept a JSON object")
         if not isinstance(self.input_schema.get("properties", {}), dict):
             raise ToolContractError(f"Tool {self.name} properties must be an object")
+        if self.mutates_document and (
+            not self.requires_document
+            or self.safety not in {SafetyLevel.SAFE_WRITE, SafetyLevel.DESTRUCTIVE}
+        ):
+            raise ToolContractError(
+                f"Tool {self.name} has an invalid document-mutation contract"
+            )
 
     def dynamic_tool(self) -> dict[str, Any]:
         return {
@@ -97,7 +107,7 @@ class ToolRegistry:
         try:
             return self._tools[name]
         except KeyError as exc:
-            raise ToolContractError(f"Unknown AgentCAD tool: {name}") from exc
+            raise ToolContractError(f"Unknown {SHORT_NAME} tool: {name}") from exc
 
     def specs(self) -> list[ToolSpec]:
         return [self._tools[name] for name in sorted(self._tools)]
@@ -111,6 +121,7 @@ class ToolRegistry:
                 "version": item.version,
                 "safety": item.safety.value,
                 "requires_document": item.requires_document,
+                "mutates_document": item.mutates_document,
                 "description": item.description,
                 "schema": item.input_schema,
             }
@@ -137,7 +148,7 @@ class ToolRegistry:
 
 
 def validate_schema(schema: Mapping[str, Any], value: Any, path: str = "arguments") -> None:
-    """Validate the JSON Schema subset used by AgentCAD tools."""
+    """Validate the JSON Schema subset used by workbench tools."""
     if "enum" in schema and value not in schema["enum"]:
         raise ToolContractError(f"{path} must be one of {schema['enum']!r}")
 

@@ -1,8 +1,8 @@
-# AgentCAD contributor instructions
+# Agent Workbench for FreeCAD contributor instructions
 
 ## Product boundaries
 
-- Keep AgentCAD installable as a normal FreeCAD addon. Do not patch FreeCAD
+- Keep Agent Workbench installable as a normal FreeCAD addon. Do not patch FreeCAD
   core unless a separate proposal demonstrates that the public addon APIs are
   insufficient.
 - Keep provider code separate from CAD tools, project storage, and Qt UI.
@@ -32,7 +32,7 @@
 ## Verification
 
 - Run `python -m pytest` and `python -m ruff check .` for every code change.
-- Run `./scripts/agentcad-doctor --json` for provider or packaging changes.
+- Run `./scripts/agent-workbench-doctor --json` for provider or packaging changes.
 - Run AutoReview after non-trivial changes and before publishing.
 - Pair source review with behavior validation for UI, CLI, or operator-facing
   behavior.
@@ -41,5 +41,5 @@
 
 - Never commit credentials, tokens, session files, `.env` files, private CAD
   documents, screenshots, or conversation stores.
-- AgentCAD may invoke Codex authentication commands, but it must never parse or
+- Agent Workbench may invoke Codex authentication commands, but it must never parse or
   persist the credential payload itself.

@@ -104,6 +104,7 @@ def test_validate_schema_accepts_nested_supported_subset() -> None:
         ({"description": "short"}, "concrete description"),
         ({"version": 0}, "invalid version"),
         ({"input_schema": {"type": "array"}}, "JSON object"),
+        ({"mutates_document": True}, "document-mutation contract"),
     ],
 )
 def test_tool_spec_rejects_invalid_contracts(kwargs: dict[str, object], message: str) -> None:

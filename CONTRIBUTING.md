@@ -1,8 +1,8 @@
 # Contributing
 
-AgentCAD welcomes focused issues and pull requests. Before changing behavior,
-open an issue describing the user workflow, expected result, CAD safety impact,
-and compatibility considerations.
+Agent Workbench for FreeCAD welcomes focused issues and pull requests. Before
+changing behavior, open an issue describing the user workflow, expected result,
+CAD safety impact, and compatibility considerations.
 
 Keep pull requests small and include:
 
@@ -13,3 +13,6 @@ Keep pull requests small and include:
 - confirmation that no credentials or private CAD data are included
 
 Run the checks documented in the README before requesting review.
+
+By submitting a contribution, you agree that it may be distributed under the
+project's MIT license.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run AgentCAD readiness checks from a source checkout."""
+"""Run Agent Workbench for FreeCAD readiness checks from a source checkout."""
 
 from __future__ import annotations
 

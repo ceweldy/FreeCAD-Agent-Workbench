@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from .. import SHORT_NAME
+
 
 class TransactionFailure(RuntimeError):
     pass
@@ -155,7 +157,8 @@ def _require_undo_enabled(document: Any) -> None:
         raise TransactionFailure("FreeCAD document cannot report its undo mode")
     if value != 1:
         raise TransactionFailure(
-            "FreeCAD undo mode must be enabled before AgentCAD can edit the document"
+            f"FreeCAD undo mode must be enabled before {SHORT_NAME} can edit "
+            "the document"
         )
 
 

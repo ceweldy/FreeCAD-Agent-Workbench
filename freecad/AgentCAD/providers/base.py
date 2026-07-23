@@ -1,4 +1,4 @@
-"""Provider interface for AgentCAD."""
+"""Provider interface for Agent Workbench."""
 
 from __future__ import annotations
 

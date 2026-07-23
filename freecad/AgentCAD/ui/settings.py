@@ -1,9 +1,10 @@
-"""AgentCAD preferences and native settings dialog."""
+"""Agent Workbench preferences and native settings dialog."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .. import SHORT_NAME
 from .qt import QtWidgets, dialog_button
 
 PARAMETER_PATH = "User parameter:BaseApp/Preferences/Mod/AgentCAD"
@@ -16,6 +17,7 @@ class SettingsSnapshot:
     reasoning_effort: str
     auto_open: bool
     allow_safe_writes: bool
+    fusion_workspace: bool
 
 
 class AgentCADSettings:
@@ -34,6 +36,7 @@ class AgentCADSettings:
             reasoning_effort=effort,
             auto_open=self._parameters.GetBool("AutoOpen", True),
             allow_safe_writes=self._parameters.GetBool("AllowSafeWrites", True),
+            fusion_workspace=self._parameters.GetBool("FusionWorkspace", False),
         )
 
     def save(self, value: SettingsSnapshot) -> None:
@@ -42,6 +45,7 @@ class AgentCADSettings:
         self._parameters.SetString("ReasoningEffort", value.reasoning_effort)
         self._parameters.SetBool("AutoOpen", bool(value.auto_open))
         self._parameters.SetBool("AllowSafeWrites", bool(value.allow_safe_writes))
+        self._parameters.SetBool("FusionWorkspace", bool(value.fusion_workspace))
 
 
 class SettingsDialog(QtWidgets.QDialog):
@@ -51,7 +55,7 @@ class SettingsDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self._settings = settings
         value = settings.snapshot()
-        self.setWindowTitle("AgentCAD Settings")
+        self.setWindowTitle(f"{SHORT_NAME} Settings")
         self.setModal(True)
 
         self.executable = QtWidgets.QLineEdit(value.codex_executable)
@@ -69,13 +73,21 @@ class SettingsDialog(QtWidgets.QDialog):
         self.effort = QtWidgets.QComboBox(self)
         self.effort.addItems(["low", "medium", "high", "xhigh"])
         self.effort.setCurrentText(value.reasoning_effort)
-        self.auto_open = QtWidgets.QCheckBox("Open AgentCAD when FreeCAD starts", self)
+        self.auto_open = QtWidgets.QCheckBox(
+            f"Open {SHORT_NAME} when FreeCAD starts",
+            self,
+        )
         self.auto_open.setChecked(value.auto_open)
         self.safe_writes = QtWidgets.QCheckBox(
             "Allow rollback-protected CAD changes",
             self,
         )
         self.safe_writes.setChecked(value.allow_safe_writes)
+        self.fusion_workspace = QtWidgets.QCheckBox(
+            "Use familiar Design workspace and navigation",
+            self,
+        )
+        self.fusion_workspace.setChecked(value.fusion_workspace)
 
         form = QtWidgets.QFormLayout()
         form.addRow("Codex executable", executable_row)
@@ -83,7 +95,7 @@ class SettingsDialog(QtWidgets.QDialog):
         form.addRow("Reasoning effort", self.effort)
 
         note = QtWidgets.QLabel(
-            "AgentCAD uses Codex-managed authentication in a private local profile.",
+            f"{SHORT_NAME} uses Codex-managed authentication in a private local profile.",
             self,
         )
         note.setWordWrap(True)
@@ -99,6 +111,7 @@ class SettingsDialog(QtWidgets.QDialog):
         layout.addLayout(form)
         layout.addWidget(self.auto_open)
         layout.addWidget(self.safe_writes)
+        layout.addWidget(self.fusion_workspace)
         layout.addWidget(note)
         layout.addWidget(buttons)
 
@@ -110,6 +123,7 @@ class SettingsDialog(QtWidgets.QDialog):
                 reasoning_effort=self.effort.currentText(),
                 auto_open=self.auto_open.isChecked(),
                 allow_safe_writes=self.safe_writes.isChecked(),
+                fusion_workspace=self.fusion_workspace.isChecked(),
             )
         )
         super().accept()

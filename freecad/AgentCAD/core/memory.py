@@ -1,4 +1,4 @@
-"""Structured, provenance-preserving AgentCAD intent memory."""
+"""Structured, provenance-preserving Agent Workbench intent memory."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import re
 import uuid
 from typing import Any
 
+from .. import SHORT_NAME
 from .project_store import AgentCADProject, now_iso
 
 MEMORY_SCHEMA = "agentcad-intent-memory-v1"
@@ -132,46 +133,58 @@ class IntentMemory:
 
     def _validate(self, memory: dict[str, Any]) -> None:
         if memory.get("schema") != MEMORY_SCHEMA or memory.get("version") != 1:
-            raise RuntimeError("Unsupported AgentCAD memory schema")
+            raise RuntimeError(f"Unsupported {SHORT_NAME} memory schema")
         if memory.get("project_id") != self.project.manifest().get("project_id"):
-            raise RuntimeError("AgentCAD memory belongs to another project")
+            raise RuntimeError(f"{SHORT_NAME} memory belongs to another project")
         if not isinstance(memory.get("entries"), list):
-            raise RuntimeError("AgentCAD memory entries must be a list")
+            raise RuntimeError(f"{SHORT_NAME} memory entries must be a list")
         ids = set()
         for item in memory["entries"]:
             if not isinstance(item, dict) or not re.fullmatch(
                 r"[a-f0-9]{32}", item.get("id", "")
             ):
-                raise RuntimeError("AgentCAD memory contains an invalid entry")
+                raise RuntimeError(f"{SHORT_NAME} memory contains an invalid entry")
             if item["id"] in ids:
-                raise RuntimeError("AgentCAD memory contains duplicate ids")
+                raise RuntimeError(f"{SHORT_NAME} memory contains duplicate ids")
             ids.add(item["id"])
             if (
                 item.get("category") not in CATEGORIES
                 or item.get("authority") not in AUTHORITIES
             ):
-                raise RuntimeError("AgentCAD memory contains an unsupported classification")
+                raise RuntimeError(
+                    f"{SHORT_NAME} memory contains an unsupported classification"
+                )
             if item.get("status") not in {"active", "superseded"}:
-                raise RuntimeError("AgentCAD memory contains an unsupported status")
+                raise RuntimeError(
+                    f"{SHORT_NAME} memory contains an unsupported status"
+                )
         by_id = {item["id"]: item for item in memory["entries"]}
         for item in memory["entries"]:
             replacement_id = item.get("superseded_by")
             if item["status"] == "active" and replacement_id is not None:
-                raise RuntimeError("Active AgentCAD memory cannot name a replacement")
+                raise RuntimeError(
+                    f"Active {SHORT_NAME} memory cannot name a replacement"
+                )
             if item["status"] == "superseded" and (
                 replacement_id not in by_id or replacement_id == item["id"]
             ):
-                raise RuntimeError("AgentCAD memory has an invalid supersession reference")
+                raise RuntimeError(
+                    f"{SHORT_NAME} memory has an invalid supersession reference"
+                )
         for entry_id in by_id:
             visited = set()
             current_id = entry_id
             while by_id[current_id]["status"] == "superseded":
                 if current_id in visited:
-                    raise RuntimeError("AgentCAD memory contains a supersession cycle")
+                    raise RuntimeError(
+                        f"{SHORT_NAME} memory contains a supersession cycle"
+                    )
                 visited.add(current_id)
                 current_id = str(by_id[current_id]["superseded_by"])
         if memory.get("revision") != _revision(memory):
-            raise RuntimeError("AgentCAD memory revision does not match its content")
+            raise RuntimeError(
+                f"{SHORT_NAME} memory revision does not match its content"
+            )
 
 
 def _revision(memory: dict[str, Any]) -> str:

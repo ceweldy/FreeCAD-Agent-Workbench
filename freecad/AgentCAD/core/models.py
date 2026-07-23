@@ -1,4 +1,4 @@
-"""Shared value objects for AgentCAD sessions and providers."""
+"""Shared value objects for Agent Workbench sessions and providers."""
 
 from __future__ import annotations
 

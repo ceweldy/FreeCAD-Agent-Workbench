@@ -3,18 +3,23 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+import socket
 import stat
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from freecad.AgentCAD.core.memory import CATEGORIES, IntentMemory
 from freecad.AgentCAD.core.project_store import (
+    CHECKPOINT_LIMIT,
     CONVERSATION_SCHEMA,
     PROJECT_SCHEMA,
     AgentCADProject,
     ProjectStore,
+    _sync_file,
+    process_start_identity,
     project_id_for_path,
     slugify,
 )
@@ -41,6 +46,7 @@ def test_project_store_initializes_stable_document_scoped_data(tmp_path: Path) -
     assert first.active_conversation()["schema"] == CONVERSATION_SCHEMA
     assert first.conversations_dir.is_dir()
     assert first.runtime_dir.is_dir()
+    assert first.checkpoints_dir.is_dir()
     assert slugify("Fixture Plate") == "fixture-plate"
 
 
@@ -95,6 +101,7 @@ def test_project_store_enforces_owner_only_permissions(tmp_path: Path) -> None:
         project.root,
         project.conversations_dir,
         project.runtime_dir,
+        project.checkpoints_dir,
     ]
     files = [
         project.root / ".agentcad.lock",
@@ -111,6 +118,263 @@ def test_project_store_enforces_owner_only_permissions(tmp_path: Path) -> None:
     repaired = ProjectStore(data_root).for_document(tmp_path / "private.FCStd")
     assert stat.S_IMODE(repaired.root.stat().st_mode) == 0o700
     assert stat.S_IMODE(repaired.manifest_path.stat().st_mode) == 0o600
+
+
+def test_checkpoint_document_is_private_durable_and_retained(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = ProjectStore(tmp_path / "data").for_document(tmp_path / "part.FCStd")
+    publication_events: list[tuple[str, Path]] = []
+    original_write_json = project._write_json
+
+    def track_directory_sync(path: Path) -> None:
+        publication_events.append(("directory_sync", path))
+
+    def track_json_write(path: Path, value: dict[str, object]) -> None:
+        if path == project.manifest_path:
+            publication_events.append(("manifest_write", path))
+        original_write_json(path, value)
+
+    monkeypatch.setattr(
+        "freecad.AgentCAD.core.project_store._sync_directory",
+        track_directory_sync,
+    )
+    monkeypatch.setattr(project, "_write_json", track_json_write)
+
+    class Document:
+        @staticmethod
+        def saveCopy(path: str) -> None:
+            Path(path).write_bytes(b"checkpoint")
+
+    records = [
+        project.checkpoint_document(
+            Document(),
+            tool="part.create_box",
+            source_turn_id=f"{index:032x}",
+        )
+        for index in range(CHECKPOINT_LIMIT + 2)
+    ]
+
+    checkpoints = sorted(project.checkpoints_dir.glob("*.FCStd"))
+    assert len(checkpoints) == CHECKPOINT_LIMIT
+    assert records[-1]["name"] == project.manifest()["latest_checkpoint"]["name"]
+    assert (project.checkpoints_dir / records[-1]["name"]).read_bytes() == b"checkpoint"
+    assert publication_events[:2] == [
+        ("directory_sync", project.checkpoints_dir),
+        ("manifest_write", project.manifest_path),
+    ]
+    if os.name == "posix":
+        assert stat.S_IMODE(checkpoints[-1].stat().st_mode) == 0o600
+
+
+def test_checkpoint_file_sync_uses_a_writable_descriptor(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    checkpoint = tmp_path / "checkpoint.FCStd"
+    checkpoint.write_bytes(b"checkpoint")
+    real_open = os.open
+    opened_flags: list[int] = []
+
+    def track_open(path, flags, *args):
+        opened_flags.append(flags)
+        return real_open(path, flags, *args)
+
+    monkeypatch.setattr(os, "open", track_open)
+
+    _sync_file(checkpoint)
+
+    assert opened_flags == [os.O_RDWR]
+
+
+def test_interrupted_conversation_recovery_is_visible_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    project = ProjectStore(tmp_path / "data").for_document(tmp_path / "part.FCStd")
+    first_user = project.append_turn("user", "Create a box")
+
+    recovered = project.recover_interrupted_conversations()
+
+    assert recovered == [
+        {
+            "conversation_id": project.active_conversation()["conversation_id"],
+            "source_turn_id": first_user["id"],
+            "checkpoint": "",
+        }
+    ]
+    turns = project.active_conversation()["turns"]
+    assert [turn["role"] for turn in turns] == ["user", "assistant"]
+    assert "No completed crash-safe checkpoint" in turns[-1]["content"]
+    assert turns[-1]["metadata"]["status"] == "interrupted"
+    assert project.recover_interrupted_conversations() == []
+
+
+def test_recovery_skips_a_turn_owned_by_a_live_freecad_process(tmp_path: Path) -> None:
+    project = ProjectStore(tmp_path / "data").for_document(tmp_path / "part.FCStd")
+    user = project.append_turn(
+        "user",
+        "Keep this running",
+        metadata={
+            "turn_owner": {
+                "host": socket.gethostname(),
+                "pid": os.getpid(),
+                "process_started": process_start_identity(os.getpid()),
+                "session_id": "b" * 32,
+            }
+        },
+    )
+
+    assert project.recover_interrupted_conversations() == []
+    assert project.active_conversation()["turns"][-1]["id"] == user["id"]
+
+
+def test_recovery_does_not_treat_a_reused_pid_as_the_original_owner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = ProjectStore(tmp_path / "data").for_document(tmp_path / "part.FCStd")
+    project.append_turn(
+        "user",
+        "The original host is gone",
+        metadata={
+            "turn_owner": {
+                "host": socket.gethostname(),
+                "pid": 321,
+                "process_started": "old-process",
+                "session_id": "c" * 32,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "freecad.AgentCAD.core.project_store._process_is_live",
+        lambda _pid: True,
+    )
+    monkeypatch.setattr(
+        "freecad.AgentCAD.core.project_store.process_start_identity",
+        lambda _pid: "new-process",
+    )
+
+    recovered = project.recover_interrupted_conversations()
+
+    assert len(recovered) == 1
+
+
+def test_recovery_finds_a_durable_checkpoint_missing_from_manifest(tmp_path: Path) -> None:
+    project = ProjectStore(tmp_path / "data").for_document(tmp_path / "part.FCStd")
+    user = project.append_turn("user", "Recover the published model edit")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    checkpoint = project.checkpoints_dir / (
+        f"{timestamp}-part-create-box-{user['id']}.FCStd"
+    )
+    checkpoint.write_bytes(b"durable-orphan")
+
+    recovered = project.recover_interrupted_conversations()
+
+    assert recovered[0]["checkpoint"] == checkpoint.name
+    final = project.active_conversation()["turns"][-1]
+    assert final["metadata"]["checkpoint"] == checkpoint.name
+
+
+def test_checkpoint_pruning_never_deletes_the_new_publication(tmp_path: Path) -> None:
+    project = ProjectStore(tmp_path / "data").for_document(tmp_path / "part.FCStd")
+    for index in range(CHECKPOINT_LIMIT):
+        future = project.checkpoints_dir / f"99991231T235959{index:06d}Z-future.FCStd"
+        future.write_bytes(b"future")
+
+    class Document:
+        @staticmethod
+        def saveCopy(path: str) -> None:
+            Path(path).write_bytes(b"new-checkpoint")
+
+    checkpoint = project.checkpoint_document(
+        Document(),
+        tool="part.create_box",
+        source_turn_id="a" * 32,
+    )
+
+    published = project.checkpoints_dir / checkpoint["name"]
+    assert published.read_bytes() == b"new-checkpoint"
+    assert len(list(project.checkpoints_dir.glob("*.FCStd"))) == CHECKPOINT_LIMIT
+    assert project.manifest()["latest_checkpoint"]["name"] == checkpoint["name"]
+
+
+def test_checkpoint_publication_survives_retention_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = ProjectStore(tmp_path / "data").for_document(tmp_path / "part.FCStd")
+
+    class Document:
+        @staticmethod
+        def saveCopy(path: str) -> None:
+            Path(path).write_bytes(b"published")
+
+    def fail_prune(**_kwargs) -> None:
+        raise PermissionError("stale checkpoint is locked")
+
+    monkeypatch.setattr(project, "_prune_checkpoints", fail_prune)
+
+    checkpoint = project.checkpoint_document(
+        Document(),
+        tool="part.create_box",
+        source_turn_id="e" * 32,
+    )
+
+    assert (project.checkpoints_dir / checkpoint["name"]).read_bytes() == b"published"
+    assert project.manifest()["latest_checkpoint"] == checkpoint
+
+
+def test_interrupted_recovery_reports_matching_checkpoint(tmp_path: Path) -> None:
+    project = ProjectStore(tmp_path / "data").for_document(tmp_path / "part.FCStd")
+    user = project.append_turn("user", "Create a saved box")
+
+    class Document:
+        @staticmethod
+        def saveCopy(path: str) -> None:
+            Path(path).write_bytes(b"checkpoint")
+
+    checkpoint = project.checkpoint_document(
+        Document(),
+        tool="part.create_box",
+        source_turn_id=user["id"],
+    )
+
+    recovered = project.recover_interrupted_conversations()
+
+    assert recovered[0]["checkpoint"] == checkpoint["name"]
+    final = project.active_conversation()["turns"][-1]
+    assert checkpoint["name"] in final["content"]
+    assert final["metadata"]["checkpoint"] == checkpoint["name"]
+
+
+def test_recovery_does_not_assign_another_conversations_checkpoint(
+    tmp_path: Path,
+) -> None:
+    project = ProjectStore(tmp_path / "data").for_document(tmp_path / "part.FCStd")
+    first_user = project.append_turn("user", "First interrupted edit")
+    first_conversation_id = project.active_conversation()["conversation_id"]
+    project.create_conversation("Second edit")
+    second_user = project.append_turn("user", "Second interrupted edit")
+
+    class Document:
+        @staticmethod
+        def saveCopy(path: str) -> None:
+            Path(path).write_bytes(b"second-checkpoint")
+
+    checkpoint = project.checkpoint_document(
+        Document(),
+        tool="part.create_box",
+        source_turn_id=second_user["id"],
+    )
+
+    recovered = project.recover_interrupted_conversations()
+
+    by_source = {item["source_turn_id"]: item for item in recovered}
+    assert by_source[first_user["id"]]["checkpoint"] == ""
+    assert by_source[second_user["id"]]["checkpoint"] == checkpoint["name"]
+    first_final = project.conversation(first_conversation_id)["turns"][-1]
+    assert checkpoint["name"] not in first_final["content"]
 
 
 def test_conversation_lifecycle_titles_catalog_and_thread_binding(tmp_path: Path) -> None:
@@ -221,7 +485,7 @@ def test_conversation_rejects_empty_content_and_unsafe_ids(tmp_path: Path) -> No
     project = ProjectStore(tmp_path / "data").for_document(tmp_path / "part.FCStd")
     with pytest.raises(ValueError, match="cannot be empty"):
         project.append_turn("user", "   ")
-    with pytest.raises(ValueError, match="Invalid AgentCAD conversation id"):
+    with pytest.raises(ValueError, match="Invalid Agent Workbench conversation id"):
         project.conversation_path("../../outside")
 
 

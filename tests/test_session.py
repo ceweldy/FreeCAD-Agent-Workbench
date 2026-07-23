@@ -84,6 +84,21 @@ def _registry() -> ToolRegistry:
     return registry
 
 
+def _write_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="test.create",
+            description="Create a deterministic test object for persistence orchestration.",
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            safety=SafetyLevel.SAFE_WRITE,
+            handler=lambda _context, _arguments: {"ok": True, "object": "Created"},
+            mutates_document=True,
+        )
+    )
+    return registry
+
+
 def _session(
     tmp_path: Path,
     provider: RecordingProvider,
@@ -211,7 +226,7 @@ def test_session_tool_handler_fails_closed_for_unexposed_tool(tmp_path: Path) ->
     assert call["tool_result"] == {
         "ok": False,
         "tool": "test.delete",
-        "error": "Tool is not available under the active AgentCAD policy",
+        "error": "Tool is not available under the active Agent Workbench policy",
     }
 
 
@@ -267,7 +282,7 @@ def test_session_enforces_provider_independent_tool_budget(tmp_path: Path) -> No
     assert results[1] == {
         "ok": False,
         "tool": "test.inspect",
-        "error": "AgentCAD tool-call budget exceeded",
+        "error": "Agent Workbench tool-call budget exceeded",
     }
     assert results[2]["ok"] is False
 
@@ -326,3 +341,154 @@ def test_session_completion_stays_with_conversation_that_received_prompt(
     assert switched["title"] == "Switched while running"
     assert switched["turns"] == []
     assert switched["provider_threads"] == {}
+
+
+def test_successful_write_is_checkpointed_and_saved_before_tool_returns(
+    tmp_path: Path,
+) -> None:
+    document = FakeDocument(str(tmp_path / "model.FCStd"))
+    provider = RecordingProvider(("test.create", {}))
+    session = _session(tmp_path, provider, document=document)
+    session.registry = _write_registry()
+
+    session.run("Create and save it", dispatch=direct_dispatch)
+
+    result = provider.calls[0]["tool_result"]
+    assert result["ok"] is True
+    assert result["persistence"]["saved"] is True
+    assert result["persistence"]["checkpointed"] is True
+    assert result["persistence"]["checkpoint"].endswith(".FCStd")
+    assert document.saves == 1
+    assert len(document.save_copies) == 1
+    assert Path(document.save_copies[0]).name.startswith(".")
+    project = session.project_for_active_document()
+    assert project is not None
+    assert (project.checkpoints_dir / result["persistence"]["checkpoint"]).is_file()
+    event_kinds = [
+        line.split('"kind": "', 1)[1].split('"', 1)[0]
+        for line in project.events_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert event_kinds == [
+        "turn_started",
+        "document_checkpoint",
+        "tool_call",
+        "turn_completed",
+    ]
+
+
+def test_non_document_safe_write_does_not_save_the_freecad_document(tmp_path: Path) -> None:
+    document = FakeDocument(str(tmp_path / "model.FCStd"))
+    provider = RecordingProvider(("test.remember", {}))
+    session = _session(tmp_path, provider, document=document)
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="test.remember",
+            description="Store a deterministic project fact without editing the CAD model.",
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            safety=SafetyLevel.SAFE_WRITE,
+            handler=lambda _context, _arguments: {"ok": True, "entry": "remembered"},
+        )
+    )
+    session.registry = registry
+
+    session.run("Remember this without saving CAD", dispatch=direct_dispatch)
+
+    result = provider.calls[0]["tool_result"]
+    assert result["ok"] is True
+    assert "persistence" not in result
+    assert document.saves == 0
+    assert document.save_copies == []
+
+
+def test_checkpoint_diagnostic_failure_cannot_prevent_primary_save(tmp_path: Path) -> None:
+    document = FakeDocument(str(tmp_path / "model.FCStd"))
+
+    class Project:
+        @staticmethod
+        def checkpoint_document(*_args, **_kwargs):
+            raise OSError("checkpoint volume unavailable")
+
+        @staticmethod
+        def log_event(*_args, **_kwargs):
+            raise OSError("event volume unavailable")
+
+    result = AgentSession._persist_successful_write(
+        {"ok": True, "tool": "test.create"},
+        document=document,
+        project=Project(),
+        tool="test.create",
+        source_turn_id="d" * 32,
+    )
+
+    assert result["ok"] is True
+    assert result["persistence"]["saved"] is True
+    assert result["persistence"]["checkpointed"] is False
+    assert document.saves == 1
+
+
+def test_write_reports_applied_edit_and_recovery_checkpoint_when_document_save_fails(
+    tmp_path: Path,
+) -> None:
+    document = FakeDocument(str(tmp_path / "model.FCStd"))
+    document.save_result = False
+    provider = RecordingProvider(("test.create", {}))
+    session = _session(tmp_path, provider, document=document)
+    session.registry = _write_registry()
+
+    session.run("Create with a failed primary save", dispatch=direct_dispatch)
+
+    result = provider.calls[0]["tool_result"]
+    assert result["ok"] is True
+    assert result["persistence"]["saved"] is False
+    assert result["persistence"]["checkpointed"] is True
+    assert "model edit was applied in memory" in result["warning"]
+    assert "recoverable checkpoint exists" in result["warning"]
+    assert result["persistence"]["warning"] == result["warning"]
+
+
+def test_provider_failure_is_persisted_as_a_completed_failed_turn(tmp_path: Path) -> None:
+    provider = RecordingProvider()
+    session = _session(tmp_path, provider)
+
+    def fail_turn(**_kwargs: Any) -> ProviderTurnResult:
+        raise RuntimeError("provider stopped")
+
+    provider.run_turn = fail_turn  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="provider stopped"):
+        session.run("This will fail", dispatch=direct_dispatch)
+
+    project = session.project_for_active_document()
+    assert project is not None
+    turns = project.active_conversation()["turns"]
+    assert [turn["role"] for turn in turns] == ["user", "assistant"]
+    assert turns[-1]["metadata"]["status"] == "failed"
+    assert project.recover_interrupted_conversations() == []
+
+
+def test_provider_failure_reports_model_writes_that_already_succeeded(tmp_path: Path) -> None:
+    document = FakeDocument(str(tmp_path / "model.FCStd"))
+    provider = RecordingProvider()
+    session = _session(tmp_path, provider, document=document)
+    session.registry = _write_registry()
+
+    def fail_after_write(**kwargs: Any) -> ProviderTurnResult:
+        result = kwargs["tool_handler"]("test.create", {})
+        assert result["ok"] is True
+        raise RuntimeError("provider stopped after tool result")
+
+    provider.run_turn = fail_after_write  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="provider stopped after tool result"):
+        session.run("Create once, then stop", dispatch=direct_dispatch)
+
+    project = session.project_for_active_document()
+    assert project is not None
+    failure = project.active_conversation()["turns"][-1]
+    assert failure["role"] == "assistant"
+    assert "Do not retry the whole task" in failure["content"]
+    writes = failure["metadata"]["successful_document_writes"]
+    assert writes[0]["saved"] is True
+    assert writes[0]["checkpoint"].endswith(".FCStd")
+    assert document.saves == 1

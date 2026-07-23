@@ -1,10 +1,11 @@
-"""Native AgentCAD dock, conversation panel, and background turn workers."""
+"""Native Agent Workbench dock, conversation panel, and background turn workers."""
 
 from __future__ import annotations
 
 import html
 import threading
 
+from .. import SHORT_NAME
 from ..core.memory import IntentMemory
 from .dispatcher import MainThreadDispatcher
 from .qt import (
@@ -106,7 +107,7 @@ class AgentCADDock(QtWidgets.QDockWidget):
     """A standard FreeCAD dock containing chat and durable memory views."""
 
     def __init__(self, application, parent=None) -> None:
-        super().__init__("AgentCAD", parent)
+        super().__init__(SHORT_NAME, parent)
         self.setObjectName("AgentCADDock")
         self.application = application
         self.panel = AgentCADPanel(application, self)
@@ -175,7 +176,9 @@ class AgentCADPanel(QtWidgets.QWidget):
         )
         self.refresh_status.clicked.connect(self.refresh_provider_status)
         self.connect_provider = QtWidgets.QPushButton("Connect", self)
-        self.connect_provider.setToolTip("Connect AgentCAD to ChatGPT through Codex")
+        self.connect_provider.setToolTip(
+            f"Connect {SHORT_NAME} to ChatGPT through Codex"
+        )
         self.connect_provider.clicked.connect(self._connect_codex)
 
         provider_row = QtWidgets.QHBoxLayout()
@@ -234,7 +237,7 @@ class AgentCADPanel(QtWidgets.QWidget):
     def _memory_tab(self):
         page = QtWidgets.QWidget(self)
         explanation = QtWidgets.QLabel(
-            "Durable project facts that AgentCAD carries into future tasks.",
+            f"Durable project facts that {SHORT_NAME} carries into future tasks.",
             page,
         )
         explanation.setWordWrap(True)
@@ -255,6 +258,8 @@ class AgentCADPanel(QtWidgets.QWidget):
     def refresh_project(self, *, force: bool = False) -> None:
         project = self.application.session.project_for_active_document()
         path = str(project.document_path) if project is not None else ""
+        # This guard must stay before interrupted-turn recovery. A live turn is
+        # intentionally persisted as user-only until its provider response arrives.
         if self._turn_worker is not None:
             if path != self._project_path:
                 self._deferred_project_refresh = True
@@ -262,6 +267,7 @@ class AgentCADPanel(QtWidgets.QWidget):
         if not force and path == self._project_path:
             return
         self._project_path = path
+        recovered = project.recover_interrupted_conversations() if project is not None else []
         self._populate_conversations(project)
         self._render_conversation(project)
         self.refresh_memory(project)
@@ -272,6 +278,13 @@ class AgentCADPanel(QtWidgets.QWidget):
         self.prompt.setEnabled(enabled)
         if project is None:
             self.activity.setText("Save the active FreeCAD document to start a task")
+        elif recovered:
+            noun = "task" if len(recovered) == 1 else "tasks"
+            self.activity.setText(
+                f"Recovered {len(recovered)} interrupted {noun}; review the conversation"
+            )
+        elif self._turn_worker is None:
+            self.activity.setText("Ready")
 
     def refresh_memory(self, project=None) -> None:
         project = project or self.application.session.project_for_active_document()
@@ -356,7 +369,7 @@ class AgentCADPanel(QtWidgets.QWidget):
             if worker is not None:
                 worker.cancel_event.set()
             self._show_error(
-                "AgentCAD could not open the ChatGPT sign-in page in your browser"
+                f"{SHORT_NAME} could not open the ChatGPT sign-in page in your browser"
             )
             return
         self.status.setText("Finish signing in to ChatGPT in your browser")
@@ -422,11 +435,12 @@ class AgentCADPanel(QtWidgets.QWidget):
         self.transcript.clear()
         if project is None:
             self.transcript.setPlainText(
-                "Save the active FreeCAD document, then ask AgentCAD to inspect or edit it."
+                f"Save the active FreeCAD document, then ask {SHORT_NAME} to "
+                "inspect or edit it."
             )
             return
         for turn in project.active_conversation().get("turns", []):
-            role = "You" if turn.get("role") == "user" else "AgentCAD"
+            role = "You" if turn.get("role") == "user" else SHORT_NAME
             self._append_message(role, str(turn.get("content", "")))
 
     @Slot(int)
@@ -480,12 +494,14 @@ class AgentCADPanel(QtWidgets.QWidget):
             return
         project = self.application.session.project_for_active_document()
         if project is None:
-            self._show_error("Save the active FreeCAD document before starting AgentCAD")
+            self._show_error(
+                f"Save the active FreeCAD document before starting {SHORT_NAME}"
+            )
             return
 
         self.prompt.clear()
         self._append_message("You", prompt)
-        self.transcript.append("<p><b>AgentCAD</b></p>")
+        self.transcript.append(f"<p><b>{SHORT_NAME}</b></p>")
         self._received_delta = False
         self._turn_project = project
         self._deferred_project_refresh = False
@@ -554,7 +570,7 @@ class AgentCADPanel(QtWidgets.QWidget):
     def _turn_failed(self, message: str) -> None:
         cursor = self.transcript.textCursor()
         cursor.movePosition(CURSOR_END)
-        cursor.insertText(f"AgentCAD could not complete the task: {message}")
+        cursor.insertText(f"{SHORT_NAME} could not complete the task: {message}")
         self.transcript.setTextCursor(cursor)
         self.transcript.append("")
         self.activity.setText("Task failed")
@@ -621,4 +637,4 @@ class AgentCADPanel(QtWidgets.QWidget):
         self.transcript.append(f"<p><b>{safe_role}</b><br>{safe_content}</p>")
 
     def _show_error(self, message: str) -> None:
-        QtWidgets.QMessageBox.warning(self, "AgentCAD", message)
+        QtWidgets.QMessageBox.warning(self, SHORT_NAME, message)

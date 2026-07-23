@@ -17,14 +17,15 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from .. import PRODUCT_NAME, SHORT_NAME
 from ..core.models import AgentEvent, ProviderStatus, ProviderTurnResult
 from ..core.tools import ToolSpec
 from .base import AgentProvider, EventHandler, ToolHandler
 
-SYSTEM_INSTRUCTIONS = """You are AgentCAD, an expert CAD operator embedded in FreeCAD.
-Work only through the dynamic AgentCAD tools supplied by the host. Do not run shell
+SYSTEM_INSTRUCTIONS = f"""You are {SHORT_NAME}, an expert CAD operator embedded in FreeCAD.
+Work only through the dynamic workbench tools supplied by the host. Do not run shell
 commands, inspect the filesystem, edit files, use web search, or request broader
-permissions. Any built-in command or non-AgentCAD tool attempt will terminate the turn.
+permissions. Any built-in command or non-workbench tool attempt will terminate the turn.
 Inspect the live document before making assumptions. Treat all lengths as
 millimeters unless the live state says otherwise. Honor durable project memory as the
 user's established requirements. Use memory.remember for durable requirements,
@@ -41,7 +42,7 @@ CODEX_CONFIG_OVERRIDES = (
     f'default_permissions="{CODEX_PERMISSION_PROFILE}"',
     (
         f"permissions.{CODEX_PERMISSION_PROFILE}.description="
-        '"AgentCAD isolated read-only runtime"'
+        '"Agent Workbench isolated read-only runtime"'
     ),
     (
         f"permissions.{CODEX_PERMISSION_PROFILE}.filesystem="
@@ -131,11 +132,13 @@ class CodexProvider(AgentProvider):
         if self.executable_override:
             path = Path(self.executable_override).expanduser()
             return str(path) if path.exists() else None
-        from_env = os.environ.get("AGENTCAD_CODEX_BIN")
+        from_env = os.environ.get("AGENT_WORKBENCH_CODEX_BIN") or os.environ.get(
+            "AGENTCAD_CODEX_BIN"
+        )
         if from_env:
             path = Path(from_env).expanduser()
             return str(path) if path.exists() else None
-        return shutil.which("codex")
+        return _discover_codex_executable()
 
     def status(self) -> ProviderStatus:
         executable = self.executable()
@@ -162,7 +165,7 @@ class CodexProvider(AgentProvider):
                 self.provider_id,
                 available=True,
                 authenticated=False,
-                message=f"AgentCAD requires Codex CLI {required} or newer.",
+                message=f"{SHORT_NAME} requires Codex CLI {required} or newer.",
                 version=version_text,
             )
         try:
@@ -197,8 +200,8 @@ class CodexProvider(AgentProvider):
             "Codex is connected."
             if authenticated
             else (
-                "Codex is installed but AgentCAD's isolated Codex home is not "
-                "connected. Choose Connect in the AgentCAD panel."
+                f"Codex is installed but {SHORT_NAME}'s isolated Codex home is not "
+                f"connected. Choose Connect in the {SHORT_NAME} panel."
             )
         )
         return ProviderStatus(
@@ -225,7 +228,7 @@ class CodexProvider(AgentProvider):
         cancel_event: threading.Event,
     ) -> ProviderTurnResult:
         if not self._turn_lock.acquire(blocking=False):
-            raise RuntimeError("Codex is already running an AgentCAD turn")
+            raise RuntimeError(f"Codex is already running a {SHORT_NAME} turn")
         try:
             return self._run_turn_locked(
                 prompt=prompt,
@@ -250,9 +253,11 @@ class CodexProvider(AgentProvider):
         cancel_event: threading.Event,
         timeout: float = 300.0,
     ) -> ProviderStatus:
-        """Authenticate the dedicated AgentCAD Codex home through app-server."""
+        """Authenticate the dedicated workbench Codex home through app-server."""
         if not self._turn_lock.acquire(blocking=False):
-            raise RuntimeError("Codex is already handling an AgentCAD activity")
+            raise RuntimeError(
+                f"Codex is already handling a {SHORT_NAME} activity"
+            )
         try:
             self._ensure_started()
             account = self._request(
@@ -321,7 +326,8 @@ class CodexProvider(AgentProvider):
             )
             if not account.get("account"):
                 raise CodexProtocolError(
-                    "ChatGPT login completed, but the AgentCAD Codex home is not ready"
+                    f"ChatGPT login completed, but the {SHORT_NAME} Codex home "
+                    "is not ready"
                 )
             return ProviderStatus(
                 self.provider_id,
@@ -353,7 +359,7 @@ class CodexProvider(AgentProvider):
         cancel_event: threading.Event,
     ) -> ProviderTurnResult:
         if not str(prompt).strip():
-            raise ValueError("AgentCAD prompts cannot be empty")
+            raise ValueError(f"{SHORT_NAME} prompts cannot be empty")
         status = self.status()
         if not status.ready:
             raise RuntimeError(status.message)
@@ -612,12 +618,12 @@ class CodexProvider(AgentProvider):
                 raise
             self._reader_thread = threading.Thread(
                 target=self._reader_loop,
-                name="AgentCAD-Codex-reader",
+                name="AgentWorkbench-Codex-reader",
                 daemon=True,
             )
             self._stderr_thread = threading.Thread(
                 target=self._stderr_loop,
-                name="AgentCAD-Codex-stderr",
+                name="AgentWorkbench-Codex-stderr",
                 daemon=True,
             )
             self._reader_thread.start()
@@ -627,8 +633,8 @@ class CodexProvider(AgentProvider):
                     "initialize",
                     {
                         "clientInfo": {
-                            "name": "agentcad",
-                            "title": "AgentCAD for FreeCAD",
+                            "name": "freecad-agent-workbench",
+                            "title": PRODUCT_NAME,
                             "version": "0.1.0",
                         },
                         "capabilities": {"experimentalApi": True},
@@ -700,7 +706,9 @@ class CodexProvider(AgentProvider):
                 "id": request_id,
                 "error": {
                     "code": -32601,
-                    "message": f"AgentCAD does not permit app-server request {method}",
+                    "message": (
+                        f"{SHORT_NAME} does not permit app-server request {method}"
+                    ),
                 },
             }
         )
@@ -719,9 +727,9 @@ class CodexProvider(AgentProvider):
             )
         try:
             if self._tool_calls > self._max_tool_calls:
-                raise RuntimeError("AgentCAD tool-call budget exceeded")
+                raise RuntimeError(f"{SHORT_NAME} tool-call budget exceeded")
             if self._tool_handler is None:
-                raise RuntimeError("AgentCAD tool handler is unavailable")
+                raise RuntimeError(f"{SHORT_NAME} tool handler is unavailable")
             payload = self._tool_handler(tool_name, arguments)
             success = bool(payload.get("ok"))
         except Exception as exc:
@@ -753,7 +761,7 @@ class CodexProvider(AgentProvider):
             handler(event)
         except Exception as exc:
             self._stderr.append(
-                "AgentCAD event delivery failed: " + exc.__class__.__name__
+                f"{SHORT_NAME} event delivery failed: " + exc.__class__.__name__
             )
 
     def _request(
@@ -843,6 +851,61 @@ def _run_status(
     return completed.returncode == 0, output
 
 
+def _discover_codex_executable() -> str | None:
+    """Find Codex even when a desktop app receives macOS's minimal PATH."""
+    candidates: list[str | Path | None] = [
+        os.environ.get("CODEX_CLI_PATH"),
+        shutil.which("codex"),
+    ]
+    home = Path.home()
+    executable_name = "codex.exe" if os.name == "nt" else "codex"
+    candidates.extend(
+        [
+            home / ".codex" / "bin" / executable_name,
+            home / ".local" / "bin" / executable_name,
+            Path("/opt/homebrew/bin") / executable_name,
+            Path("/usr/local/bin") / executable_name,
+        ]
+    )
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        candidates.extend(
+            [
+                Path(local_app_data)
+                / "Programs"
+                / "OpenAI"
+                / "Codex"
+                / "bin"
+                / executable_name,
+                Path(local_app_data) / "OpenAI" / "Codex" / "bin" / executable_name,
+                Path(local_app_data) / "Programs" / "Codex" / executable_name,
+            ]
+        )
+    app_data = os.environ.get("APPDATA")
+    if app_data:
+        candidates.append(Path(app_data) / "npm" / "codex.cmd")
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate).expanduser()
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if _is_executable(path):
+            return key
+    return None
+
+
+def _is_executable(path: Path) -> bool:
+    try:
+        return path.is_file() and os.access(path, os.X_OK)
+    except OSError:
+        return False
+
+
 def _parse_codex_version(
     value: str,
 ) -> tuple[int, int, int, str | None] | None:
@@ -913,7 +976,9 @@ def _prepare_isolated_codex_home(target: Path) -> Path:
     target = target.expanduser().resolve()
     source = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser().resolve()
     if target == source:
-        raise RuntimeError("AgentCAD's isolated Codex home must differ from CODEX_HOME")
+        raise RuntimeError(
+            f"{SHORT_NAME}'s isolated Codex home must differ from CODEX_HOME"
+        )
     target.mkdir(parents=True, exist_ok=True, mode=0o700)
     if os.name == "posix":
         os.chmod(target, 0o700)
@@ -923,11 +988,13 @@ def _prepare_isolated_codex_home(target: Path) -> Path:
         path = target / forbidden
         if path.exists():
             raise RuntimeError(
-                f"AgentCAD refused unexpected Codex extension state: {forbidden}"
+                f"{SHORT_NAME} refused unexpected Codex extension state: {forbidden}"
             )
     skills = target / "skills"
     if skills.is_dir() and any(path.name != ".system" for path in skills.iterdir()):
-        raise RuntimeError("AgentCAD refused unexpected user skills in its Codex home")
+        raise RuntimeError(
+            f"{SHORT_NAME} refused unexpected user skills in its Codex home"
+        )
 
     target_auth = target / "auth.json"
     if target_auth.is_symlink():
@@ -936,7 +1003,9 @@ def _prepare_isolated_codex_home(target: Path) -> Path:
 
 
 def _write_managed_codex_config(path: Path) -> None:
-    content = "# Managed by AgentCAD. Provider settings are supplied by the host.\n"
+    content = (
+        "# Managed by Agent Workbench. Provider settings are supplied by the host.\n"
+    )
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
         descriptor = os.open(
@@ -971,7 +1040,7 @@ def _turn_prompt(
             "USER REQUEST\n" + prompt.strip(),
             "LIVE FREECAD STATE\n" + json.dumps(context, separators=(",", ":"), default=str),
             "DURABLE PROJECT MEMORY\n" + json.dumps(memory, separators=(",", ":"), default=str),
-            "RECENT AGENTCAD CONVERSATION\n"
+            "RECENT AGENT WORKBENCH CONVERSATION\n"
             + json.dumps(history, separators=(",", ":"), default=str),
         ]
     )
@@ -991,7 +1060,7 @@ def _item_label(item: dict[str, Any]) -> str:
     labels = {
         "agentMessage": "Preparing response",
         "reasoning": "Thinking through the CAD operation",
-        "dynamicToolCall": "Using an AgentCAD tool",
+        "dynamicToolCall": "Using an Agent Workbench tool",
         "commandExecution": "Codex requested a blocked command",
         "fileChange": "Codex requested a blocked file change",
     }

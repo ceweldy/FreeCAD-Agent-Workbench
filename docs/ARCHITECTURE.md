@@ -1,7 +1,7 @@
-# AgentCAD architecture
+# Agent Workbench for FreeCAD architecture
 
-AgentCAD keeps FreeCAD, agent orchestration, and model providers behind explicit
-boundaries.
+Agent Workbench keeps FreeCAD, agent orchestration, and model providers behind
+explicit boundaries.
 
 ```mermaid
 flowchart LR
@@ -35,15 +35,15 @@ It contains no provider-specific wire protocol.
 ### Provider adapters
 
 Providers implement one interface. The initial adapter launches the official
-Codex app-server over JSONL and supplies AgentCAD tools as dynamic function
+Codex app-server over JSONL and supplies workbench tools as dynamic function
 tools. Future providers can implement the same interface without changing the
 UI, memory, or CAD tools.
 
 The Codex process receives a minimal environment and a custom permission
 profile. Sandboxed commands can read only operating-system runtime files and
-the isolated AgentCAD runtime root. AgentCAD interrupts and closes a turn if it
-attempts any built-in command or non-AgentCAD capability. A stable, private,
-AgentCAD-managed Codex home preserves provider thread state across restarts
+the isolated workbench runtime root. Agent Workbench interrupts and closes a
+turn if it attempts any built-in command or non-workbench capability. A stable,
+private, workbench-managed Codex home preserves provider thread state across restarts
 without importing user-configured MCP servers, plugins, skills, rules, or
 general configuration.
 
@@ -61,7 +61,7 @@ An exception or failed postcondition aborts the transaction.
 
 ### Project memory
 
-Saved CAD documents map to local AgentCAD projects under FreeCAD's user data
+Saved CAD documents map to local workbench projects under FreeCAD's user data
 directory. A project contains a manifest, conversations, structured intent
 memory, runtime state, and an append-only redacted activity log. Writes are
 atomic, local files use owner-only permissions, and formats are versioned.
