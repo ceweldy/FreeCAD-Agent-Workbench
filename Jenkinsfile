@@ -10,7 +10,7 @@ def inDocker(String image, String script) {
     """
 }
 
-def steps = '''python -m pip install --upgrade pip
+def ciSteps = '''python -m pip install --upgrade pip
 python -m pip install -e '.[dev]'
 python -m ruff check .
 python -m pytest
@@ -22,9 +22,9 @@ pipeline {
     stages {
         stage('Test') {
             parallel {
-                stage('Python 3.11') { steps { script { inDocker('python:3.11', steps) } } }
-                stage('Python 3.12') { steps { script { inDocker('python:3.12', steps) } } }
-                stage('Python 3.13') { steps { script { inDocker('python:3.13', steps) } } }
+                stage('Python 3.11') { steps { script { inDocker('python:3.11', ciSteps) } } }
+                stage('Python 3.12') { steps { script { inDocker('python:3.12', ciSteps) } } }
+                stage('Python 3.13') { steps { script { inDocker('python:3.13', ciSteps) } } }
             }
         }
     }
